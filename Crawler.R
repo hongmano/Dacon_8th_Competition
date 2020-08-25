@@ -185,9 +185,23 @@ KBO_crawl <- function(min_year, max_year){
 # 4. Data Formatting ------------------------------------------------------
 
 kbo2002_2019 <- KBO_crawl(2002, 2019)
-data_fin <- kbo2002_2019$page1 %>% inner_join(kbo2002_2019$page2) %>% inner_join(kbo2002_2019$detail)
+data_fin <- kbo2002_2019$page1 %>% 
+  inner_join(kbo2002_2019$page2) %>% 
+  inner_join(kbo2002_2019$detail) %>% 
+  unique
+data_fin$year <- as.numeric(data_fin$year) + 1981
+write.csv(data_fin, 'kbo_crawl.csv', row.names = F)
 
-# 선수별 고유번호가 없기 때문에 동명이인은 제거해야 함
-# 제거기준은 같은 시즌, 같은 팀으로 소속된 선수는 모두 제거
+# 선수별 PK가 없기 때문에 동명이인은 제거해야 함
+# 제거기준은 같은 시즌, 같은 팀의 동명이인은 모두 제거
 # ex) LG의 작은 이병규, 큰 이병규
 
+duplicate <- data_fin %>% 
+  group_by(year, `팀명`, `선수명`) %>% 
+  tally() %>% 
+  filter(n > 1) %>% 
+  select(-n) %>% 
+  inner_join(data_fin)
+
+data_fin <- setdiff(data_fin, duplicate)
+rm(duplicate)
