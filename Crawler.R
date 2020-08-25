@@ -8,9 +8,9 @@
 
 # 2. Options / Packages ---------------------------------------------------
 
-library(RSelenium)
-library(stringr)
-library(dplyr)
+if (!require(RSelenium)) install.packages('RSelenium')
+if (!require(stringr)) install.packages('stringr')
+if (!require(dplyr)) install.packages('dplyr')
 
 # 3. Crawling -------------------------------------------------------------
 
