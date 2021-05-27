@@ -92,7 +92,7 @@ data2 <- data2 %>% mutate(X1B = H - X2B - X3B - HR)
 # 2020년의 성적을 예측하는 것이 목표이므로 2020년 데이터는 Test Data로
 # *** 난이도 조절 위해 100타수 이상 선수만 Filtering
 
-test_x <- data2 %>% filter(YEAR == 2019 & AB >= 50)
+test_x <- data2 %>% filter(YEAR == 2019 & AB >= 100)
 test_y <- data2 %>% 
   filter(YEAR == 2020) %>% 
   mutate(PK = paste0(as.numeric(substr(PK, 1, 4)) - 1, substr(PK, 5, 20))) %>% 
