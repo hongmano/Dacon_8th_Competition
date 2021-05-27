@@ -67,7 +67,7 @@ str(data2)
 
 # 동명이인 선수 존재
 
-same_name <- data2 %>% group_by(YEAR, PLAYER) %>% tally %>% filter(n != 1)
+same_name <- data2 %>% group_by(YEAR, TEAM, PLAYER) %>% tally %>% filter(n != 1)
 
 # 확인 결과 2010 ~ 2016 시즌 LG에 이병규 선수가 2명
 
