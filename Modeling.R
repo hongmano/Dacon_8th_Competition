@@ -1,211 +1,363 @@
 
-# 1. Options / Package ----------------------------------------------------
+# 1. Prepare --------------------------------------------------------------
+
+# cmd 창에서
+# cd C:\r_selenium
+# java -Dwebdriver.gecko.driver="geckodriver.exe" -jar selenium-server-standalone-3.11.0.jar -port 4445
+
+# 2. Options / Packages ---------------------------------------------------
 
 options(scipen = 100)
-if (!require(dplyr)) install.packages('dplyr')
-if (!require(lubridate)) install.packages('lubridate')
-if (!require(tm)) install.packages('tm')
-if (!require(xgboost)) install.packages('xgboost')
 
-# 2. Data Loading ---------------------------------------------------------
+if (!require(RSelenium)) install.packages('RSelenium'); require(RSelenium) # Selenium in R
 
-regular_season <- read.csv('Regular_Season_Batter.csv',
-                           fileEncoding = 'UTF-8',
-                           stringsAsFactor = F,
-                           na.strings = '-')
+if (!require(xgboost)) install.packages('xgboost'); require(xgboost) # XGBOOST
 
-day_by_day <- read.csv('Regular_Season_Batter_Day_By_Day_b4.csv',
-                       fileEncoding = 'UTF-8',
-                       stringsAsFactor = F,
-                       na.strings = '-')
+if (!require(dplyr)) install.packages('dplyr'); require(dplyr) # Wrangling
+if (!require(stringr)) install.packages('stringr'); require(stringr) # Wrangling
+if (!require(stringr)) install.packages('reshape2'); require(reshape2) # Wrangling
+if (!require(scales)) install.packages('scales'); require(scales) # Wrangling
 
-submission <- read.csv('submission.csv',
-                       fileEncoding = 'UTF-8')
+if (!require(ggplot2)) install.packages('ggplot2'); require(ggplot2) # Visualize
+if (!require(ggpubr)) install.packages('ggpubr'); require(ggpubr) # Visualize
+if (!require(plotly)) install.packages('plotly'); require(plotly) # Visualize
+if (!require(ggcorrplot)) install.packages('ggcorrplot'); require(ggcorrplot) # Visualize
 
-data_fin <- read.csv('kbo_crawl.csv',
-                     stringsAsFactors = F)
+source('utils.R')
 
-# 3. Data Wrangling -------------------------------------------------------
+# 3. Crawling -------------------------------------------------------------
 
-# 3-1. regular_season
+# Execute Chrome Driver
 
-# height.weight 변수를  height(키), weight(몸무게)로 나눠주기
+remDr <- remoteDriver(remoteServerAddr = "localhost" ,
+                      port = 4445L, 
+                      browserName = "chrome")  
+remDr$open(silent = T)
 
-regular_season$height <- substr(regular_season$height.weight, 1, 5) %>% 
-  str_remove('cm') %>%
-  as.numeric()
+# Get Data
 
-regular_season$weight <- substr(regular_season$height.weight, 7, 20) %>% 
-  str_remove('kg') %>%
-  as.numeric()
+data <- get_data(2010, 2020)
 
-regular_season$height.weight <- NULL
+setwd('C:\\Users\\Mano\\Desktop\\프로젝트\\2019. 04[Dacon 6th Competition - KBO 타자들의 OPS 예측]\\데이터')
+write.csv(data, 'kbo_crawl.csv', row.names = F)
 
-# year_born 변수를 ymd 형식으로 바꿔준 후 age(해당 시즌 당시의 나이) 변수 만들기
+# 4. Data Wrangling --------------------------------------------------------
 
-regular_season$born <- regular_season$year_born %>% 
-  str_remove('년 ') %>% 
-  str_remove('월 ') %>% 
-  str_remove('일') %>% 
-  ymd()
+data2 <- read.csv('kbo_crawl.csv')
 
-regular_season$age <- regular_season$year - year(regular_season$born) + 1
+# 4-1. To Numeric
 
-regular_season$year_born <- NULL
+str(data2)
+data2 <- sapply(data2, function(x) str_replace_all(x, '-', '')) %>% as.data.frame()
 
-# position 변수를 position(포지션), hand(?타) 변수로 나눠주기
+data2_chr <- data2 %>% select(PLAYER, TEAM, POSITION, YEAR)
+data2_num <- data2 %>% select(-c(PLAYER, TEAM, POSITION, YEAR))
+data2_num <- sapply(data2_num, as.numeric) %>% as.data.frame()
 
-regular_season$hand <- ifelse(substr(regular_season$position, 1, 2) == '포수',
-                              substr(regular_season$position, 6, 7),
-                              substr(regular_season$position, 7, 8))
+data2 <- cbind(data2_chr, data2_num)
 
-regular_season$position <- ifelse(substr(regular_season$position, 1, 1) == '포',
-                                  '포수',
-                                  substr(regular_season$position, 1, 3))
 
-# starting_salary를 10,000원 단위로 바꿔주기
+data2$INDEX <- NULL
+data2[is.na(data2)] <- 0
 
-regular_season$starting_salary <- regular_season$starting_salary %>%
-  str_remove('만원') %>% 
-  str_remove('0달러') %>% 
-  as.numeric()
 
-# career 변수 삭제
+str(data2)
 
-regular_season$career <- NULL
+# 4-2. Primary Key
 
-# 1루타 변수 만들기
+# 동명이인 선수 존재
 
-regular_season <- regular_season %>% 
-  mutate(X1B = H - X2B - X3B - HR)
+same_name <- data2 %>% group_by(YEAR, PLAYER) %>% tally %>% filter(n != 1)
 
+# 확인 결과 2010 ~ 2016 시즌 LG에 이병규 선수가 2명
 
-# year 변수를 string으로 변환
+same_name <- data2 %>% 
+  filter(YEAR %in% 2010:2016 & TEAM == 'LG' & PLAYER == '이병규')
 
-regular_season$year <- as.character(regular_season$year)
+# 사전 지식 없이 구분 불가 -> 삭제
 
-# 3-2. regular_season_day_by_day
+data2 <- setdiff(data2, same_name)
 
-# 경기 날짜 ymd 형식으로 만들기
+# 동명이인 제거했기에, YEAR + TEAM + 선수이름을 Primary Key로 사용가능
 
-day_by_day$date <- paste0(day_by_day$year, day_by_day$date) %>% 
-  removePunctuation() %>% 
-  ymd()
+data2 <- data2 %>% mutate(PK = paste(YEAR, TEAM, PLAYER, sep = '_'))
+data2$PK
 
-# 1루타 변수 만들기
+# 4-3. 1루타 변수 생성
+# 1루타 = 안타 - 2루타 - 3루타 - 홈런
 
-day_by_day <- day_by_day %>% 
-  mutate(X1B = H - X2B - X3B - HR)
+data2 <- data2 %>% mutate(X1B = H - X2B - X3B - HR)
 
-# 누적 변수 만들기(avg2 처럼 AB, H, HR, etc.)
+# 4-4. Train / Test Split
+# 2020년의 성적을 예측하는 것이 목표이므로 2020년 데이터는 Test Data로
+# *** 난이도 조절 위해 100타수 이상 선수만 Filtering
 
-day_by_day <- day_by_day %>% arrange(batter_id, date)
-test <- day_by_day %>% arrange(batter_id, date)
+test_x <- data2 %>% filter(YEAR == 2019 & AB >= 50)
+test_y <- data2 %>% 
+  filter(YEAR == 2020) %>% 
+  mutate(PK = paste0(as.numeric(substr(PK, 1, 4)) - 1, substr(PK, 5, 20))) %>% 
+  filter(PK %in% test_x$PK) %>% 
+  select(PK, OPS, AB)
+  
+train <- data2 %>% filter(YEAR != 2020 & YEAR != 2019)
 
-test <- test %>%
-  group_by(batter_id, year) %>% 
-  select_if(is.integer) %>% 
-  mutate_all(cumsum) %>% 
-  rename_at(.funs = function(x) paste0(x, '2'),
-            .vars = c('AB', 'R', 'H', 'X1B', 'X2B', 'X3B', 'HR', 'RBI', 'SB', 
-                      'CS', 'BB', 'HBP', 'SO', 'GDP'))
+### Test Data는 무슨 일이 있어도 열어보지 않음이 중요!!(Data Leakage)
 
-day_by_day <- bind_cols(day_by_day, test)  
-rm(test)
+# 5. EDA ------------------------------------------------------
 
-# 3-3. data_fin
+### DOMAIN
 
-# 팀명, 선수명을 제외한 변수 numeric으로 변환
-
-data_fin_chr <- data_fin %>% 
-  select(`팀명`, `선수명`) %>% 
-  `colnames<-`(c('team', 'batter_name'))
-
-data_fin_num <- data_fin %>% select(-c(`팀명`, `선수명`)) %>% 
-  apply(2, function(x){ifelse(x == '-', 0, x) %>% as.numeric(x)}) %>% 
-  as.data.frame()
-
-# 1루타 변수 생성
-
-data_fin <- cbind(data_fin_chr, data_fin_num) %>% 
-  mutate(X1B = H - X2B - X3B - HR)
-rm(data_fin_chr, data_fin_num)
-
-# 선수별 PK가 없기 때문에 동명이인은 제거해야 함
-# 제거기준은 같은 시즌, 같은 팀의 동명이인은 모두 제거
-# ex) LG의 작은 이병규, 큰 이병규
-
-duplicate <- data_fin %>% 
-  group_by(year, team, batter_name) %>% 
-  tally() %>% 
-  filter(n > 1) %>% 
-  select(-n) %>% 
-  inner_join(data_fin)
-
-data_fin <- setdiff(data_fin, duplicate)
-
-# 데이콘 데이터 상의 batter_id 매치
-
-data_fin <- data_fin %>% 
-  left_join(regular_season %>% select(batter_name, batter_id) %>% unique)
-
-# AB >= 100인 데이터 걸러내기
-
-data_fin_jujeon <- data_fin %>% filter(AB >= 100)
-data_fin_hubo <- data_fin %>% filter(AB < 100)
-
-# 4. Modeling -------------------------------------------------------------
-
-
-# 4-1. Model 1 (AB >= 100) ------------------------------------------------
-
-# 1년 전의 성적과 1년 후의 OPS 연결시키기
-# ex) 2018년의 타격 성적 + 2019년의 OPS
-
-data_modeling_jujeon <- data_fin_jujeon %>%
-  select(-OPS) %>% 
-  inner_join(data_fin %>% 
-               select(batter_name, year, OPS) %>% 
-               mutate(year = year-1))
-
-# Mdel1(AB >= 100) Hold-Out
-
-# Test (submission 데이터)
-
-test_jujeon <- data_modeling_jujeon %>% 
-  filter(batter_id %in% submission$batter_id & year == 2018) %>% 
-  select(-c(team, batter_name, year))
-
-dtest_jujeon <- xgb.DMatrix(as.matrix(test_jujeon %>% select(-c(OPS, batter_id))),
-                            label = test_jujeon$OPS)
-
-# Validation (Submission 타자들의 이전 데이터)
-
-validation_jujeon <- data_modeling_jujeon %>%
-  filter(batter_id %in% submission$batter_id & year != 2018) %>% 
-  select(-c(team, batter_name, year))
-
-dvalidation_jujeon <- xgb.DMatrix(as.matrix(validation_jujeon %>% select(-c(OPS, batter_id))),
-                                  label = validation_jujeon$OPS)
-
-# Train
-
-train_jujeon <- data_modeling_jujeon %>% 
-  filter(!batter_id %in% submission$batter_id) %>% 
-  select(-c(team, batter_name, year))
-
-dtrain_jujeon <- xgb.DMatrix(as.matrix(train_jujeon %>% select(-c(OPS, batter_id))),
-                             label = train_jujeon$OPS)
-
-# Random Search
+train$RBI <- NULL
+train$XBH <- NULL
+train$R <- NULL
+train$PA <- NULL
+train$G <- NULL
+
+### GENERAL
+# 5-1. 성적 수렴 AB
+
+ggplotly(train %>% 
+           ggplot() +
+           geom_point(aes(x = AB,
+                          y = OPS,
+                          col = ifelse(AB >= 50, 'Team', '4실'))) +
+           geom_vline(xintercept = 50,
+                      col= 'red',
+                      linetype = 'dotted') +
+           theme_bw() +
+           theme(legend.position = 'none') +
+           geom_smooth(aes(x = AB,
+                           y = OPS),
+                       method = 'auto'))
+
+train <- train %>% filter(AB >= 50)
+
+# 5-2. 연도 별 AB
+
+ggplotly(train %>% 
+           group_by(YEAR) %>% 
+           summarise(AB = sum(AB)) %>% 
+           ggplot(aes(x = YEAR,
+                      y = AB,
+                      fill = AB)) +
+           geom_bar(stat = 'identity') +
+           scale_fill_gradient(low = 'black',
+                               high = 'red') +
+           labs(x = '연도',
+                y = '타수',
+                title = '연도별 타수') +
+           theme_bw())
+
+
+
+# etc. 스포츠 데이터 특성
+
+ggcorrplot(train %>% select_if(is.numeric) %>% cor,
+           lab = T,
+           hc.order = T)
+
+train %>% select(OPS, PH.BA, GO.AO) %>% pairs()
+
+train$PH.BA <- NULL
+train$GO.AO <- NULL
+
+### 타격 변수
+# 5-3. 3루타가 관계 없음?
+
+ggcorrplot(train %>%
+             select(X1B, X2B, X3B, HR, OPS) %>% 
+             cor,
+           lab = T)
+
+plot(density(train$X3B))
+
+# 5-4. 타고투저
+
+mano <- train %>% 
+  select(YEAR, AB, H, X1B, X2B, X3B, HR) %>% 
+  group_by(YEAR) %>% 
+  summarise_all(.funs = sum)
+
+ggplotly(melt(mano, id.vars = c('YEAR', 'AB', 'H')) %>%
+           ggplot(aes(x = YEAR,
+                      y = value,
+                      col = variable)) +
+           geom_line(aes(group = variable)) + 
+           geom_point(aes(size = AB)) +
+           labs(title = '연도 별 안타 빈도',
+                y = 'Freq') +
+           theme_bw())
+
+# 5-5. 타격 유형
+
+mano <- mano %>% 
+  mutate(X1B_ratio = X1B / H * 100,
+         X2B_ratio = X2B / H * 100,
+         HR_ratio = HR / H * 100) %>% 
+  select(YEAR, ends_with('ratio')) 
+melt(mano, id.vars = 'YEAR') %>%
+  ggplot() +
+  geom_bar(aes(y = value, 
+               x = YEAR, 
+               fill = variable), 
+           stat = "identity") +
+  geom_text(aes(x = YEAR, 
+                y = round(value) - 4, 
+                label = paste0(round(value), "%")),
+            colour = "black", 
+            size = 3) +
+  scale_y_continuous(labels = dollar_format(suffix = "%", 
+                                            prefix = "")) +
+  labs(y = "Percentage") +
+  theme_bw() +
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal",
+        legend.title = element_blank())
+
+
+### 출루 변수
+# 5-6 출루 유형
+
+mano <- train %>% 
+  select(YEAR, AB, BB, IBB, HBP) %>% 
+  group_by(YEAR) %>% 
+  summarise_all(.funs = sum)
+ggplotly(melt(mano, id.vars = c('YEAR', 'AB')) %>%
+           ggplot(aes(x = YEAR,
+                      y = value,
+                      col = variable)) +
+           geom_point(aes(size = AB)) +
+           geom_line(aes(group = variable)) +
+           labs(title = '연도 별 4구/고의4구/사구 빈도',
+                y = 'Freq') +
+           theme_bw())
+
+# 5-7 출루 유형
+
+mano <- train %>% 
+  select(YEAR, BB, IBB, HBP) %>% 
+  group_by(YEAR) %>% 
+  summarise_all(.funs = sum) %>% 
+  mutate(BB_ratio = BB / (BB + IBB + HBP) * 100,
+         IBB_ratio = IBB / (BB + IBB + HBP) * 100,
+         HBP_ratio = HBP / (BB + IBB + HBP) * 100) %>% 
+  select(YEAR, ends_with('_ratio'))
+melt(mano, id.vars = 'YEAR') %>%
+  ggplot() +
+  geom_bar(aes(y = value, 
+               x = YEAR, 
+               fill = variable), 
+           stat = "identity") +
+  geom_text(aes(x = YEAR, 
+                y = round(value), 
+                label = paste0(round(value), "%")),
+            colour = "black", 
+            size = 3) +
+  scale_y_continuous(labels = dollar_format(suffix = "%", 
+                                            prefix = "")) +
+  labs(y = "Percentage") +
+  theme_bw() +
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal",
+        legend.title = element_blank())
+
+### POSITION
+
+my_comparisons <- list( c("Catcher", "Infielder"), 
+                        c("Catcher", "Outfielder"), 
+                        c("Infielder", "Outfielder"))
+
+ggboxplot(data = train, 
+          x = 'POSITION', 
+          y = 'OPS',
+          color = 'POSITION', 
+          palette = "jco", 
+          bxp.errorbar = TRUE) +
+  stat_boxplot(geom = 'errorbar', 
+               data = train, 
+               aes(x = POSITION, 
+                   y = OPS,
+                   color = POSITION)) +
+  stat_compare_means(comparisons = my_comparisons) + 
+  stat_compare_means(label.y = 1.5) +
+  labs(x = '타격 유형') +
+  theme_bw()
+
+# 6. Feature Engineering --------------------------------------------------
+
+# 비율
+
+train <- train %>% 
+  mutate(X1B = X1B / H,
+         X2B = X2B / H,
+         X3B = X3B / H,
+         HR = HR / H)
+
+test_x <- test_x %>% 
+  mutate(X1B = X1B / H,
+         X2B = X2B / H,
+         X3B = X3B / H,
+         HR = HR / H)
+
+# 주성분분석
+
+pca <- train %>% select(SLG, GPA, AVG, OBP)
+pca_matrix <- prcomp(pca, scale. = T)
+
+summary(pca_matrix)
+
+pca_matrix$rotation <- pca_matrix$rotation[, 1:2]
+pca <- pca_matrix$x %*% pca_matrix$rotation %>% 
+  as.data.frame() %>% 
+  `colnames<-`(c('PC1', 'PC2'))
+
+train <- train %>% 
+  mutate(PC1 = pca$PC1,
+         PC2 = pca$PC2)
+
+ggcorrplot(cor(train %>% select_if(is.numeric)),
+           lab = T)
+
+### TEST
+
+pca <- test_x %>% select(SLG, GPA, AVG, OBP)
+pca_matrix <- prcomp(pca, scale. = T)
+
+summary(pca_matrix)
+
+pca_matrix$rotation <- pca_matrix$rotation[, 1:2]
+pca <- pca_matrix$x %*% pca_matrix$rotation %>% 
+  as.data.frame() %>% 
+  `colnames<-`(c('PC1', 'PC2'))
+
+test_x <- test_x %>% 
+  mutate(PC1 = pca$PC1,
+         PC2 = pca$PC2)
+
+# 7. Modeling -----------------------------------------------------------
+
+train_x <- train %>% select(-OPS)
+train_y <- train %>% select(PK, OPS)
+train_y <- train_y %>% mutate(PK = paste0(as.numeric(substr(PK, 1, 4)) - 1, substr(PK, 5, 100)))
+
+train_fin <- inner_join(train_x, train_y)
+
+
+vars <- c('AB', 'H', 'X1B', 'X2B', 'X3B', 'HR', 'TB', 'SAC', 'SF', 'BB', 'IBB', 'HBP', 'SO', 'GDP', 'MH', 'RISP', 'GO', 'AO',
+          'GW.RBI', 'BB.K', 'P.PA', 'ISOP', 'XR', 'PC1', 'PC2')
+dtrain <- xgb.DMatrix(data = data.matrix(train_fin[, vars]),
+                      label = train_fin$OPS)
+
+# Random search for parameters
 
 best_param <- list()
 best_seednumber <- 1234
 best_rmse <- Inf
 best_rmse_index <- 0
 
-for (iter in 1:2) {
-  param <- list(obj = 'reg:linear',
+for(iter in 1:10){
+  
+  param <- list(objective = "reg:squarederror",
                 eval_metric = "rmse",
                 max_depth = sample(6:10, 1),
                 eta = runif(1, .01, .3), 
@@ -214,18 +366,18 @@ for (iter in 1:2) {
                 min_child_weight = sample(1:40, 1),
                 max_delta_step = sample(1:10, 1)
   )
+  
   cv.nround <-  2000
   cv.nfold <-  5 
-  seed.number  <-  sample.int(10000, 1) 
+  seed.number  <-  sample.int(10000, 1)
   set.seed(seed.number)
-  mdcv <- xgb.cv(data = dtrain_jujeon,
-                 params = param,
-                 nfold = cv.nfold, 
-                 nrounds = cv.nround,
-                 verbose = T,
-                 early_stopping_rounds = 50,
-                 print_every_n = 100,
-                 maximize = FALSE)
+  mdcv <- xgboost::xgb.cv(data = dtrain, 
+                          params = param,  
+                          nfold = cv.nfold, 
+                          nrounds = cv.nround,
+                          verbose = F, 
+                          early_stopping_rounds = 30, 
+                          maximize = FALSE)
   
   min_rmse_index  <-  mdcv$best_iteration
   min_rmse <-  mdcv$evaluation_log[min_rmse_index]$test_rmse_mean
@@ -236,124 +388,30 @@ for (iter in 1:2) {
     best_seednumber <- seed.number
     best_param <- param
   }
+  
+  print(paste0(iter, 'th Trial has done....'))
 }
 
-# Fit
-
+nround <- best_rmse_index
 set.seed(best_seednumber)
-model_jujeon <- xgb.train(data = dtrain_jujeon,
-                        params = best_param,
-                        nround = best_rmse_index,
-                        verbose = T,
-                        watchlist = list(train = dtrain_jujeon,
-                                         validation = dvalidation_jujeon))
 
-xgb.plot.importance(xgb.importance(model = model_jujeon))
-mean((predict(model_jujeon, dtest_jujeon) - test_jujeon$OPS) ** 2)
+xgboost_model <- xgboost(data = dtrain,
+                         params = best_param,
+                         nround = nround, 
+                         verbose = T,
+                         print_every_n = 1)
 
-# 4-2. Model 2 (AB < 100) -------------------------------------------------
+# 8. Submitting -----------------------------------------------------------
 
-# 1년 전의 성적과 1년 후의 OPS 연결시키기
-# ex) 2018년의 타격 성적 + 2019년의 OPS
+dtest <- xgb.DMatrix(data = data.matrix(test_x[, vars]),
+                      label = test_x$OPS)
 
-data_modeling_hubo <- data_fin_hubo %>%
-  select(-OPS) %>% 
-  inner_join(data_fin %>% 
-               select(batter_name, year, OPS) %>% 
-               mutate(year = year-1))
+test_x$pred <- predict(xgboost_model, dtest)
 
-# Mdel1(AB >= 100) Hold-Out
+result <- inner_join(test_y, test_x %>% select(PK, pred)) %>% 
+  mutate(error = OPS - pred)
 
-# Test (submission 데이터)
+### MSE
 
-test_hubo <- data_modeling_hubo %>% 
-  filter(batter_id %in% submission$batter_id & year == 2018) %>% 
-  select(-c(team, batter_name, year))
+mean(result$error ** 2)
 
-dtest_hubo <- xgb.DMatrix(as.matrix(test_hubo %>% select(-c(OPS, batter_id))),
-                            label = test_hubo$OPS)
-
-# Validation (Submission 타자들의 이전 데이터)
-
-validation_hubo <- data_modeling_hubo %>%
-  filter(batter_id %in% submission$batter_id & year != 2018) %>% 
-  select(-c(team, batter_name, year))
-
-dvalidation_hubo <- xgb.DMatrix(as.matrix(validation_hubo %>% select(-c(OPS, batter_id))),
-                                  label = validation_hubo$OPS)
-
-# Train
-
-train_hubo <- data_modeling_hubo %>% 
-  filter(!batter_id %in% submission$batter_id) %>% 
-  select(-c(team, batter_name, year))
-
-dtrain_hubo <- xgb.DMatrix(as.matrix(train_hubo %>% select(-c(OPS, batter_id))),
-                             label = train_hubo$OPS)
-
-# Random Search
-
-best_param <- list()
-best_seednumber <- 1234
-best_rmse <- Inf
-best_rmse_index <- 0
-
-for (iter in 1:2) {
-  param <- list(obj = 'reg:linear',
-                eval_metric = "rmse",
-                max_depth = sample(6:10, 1),
-                eta = runif(1, .01, .3), 
-                subsample = runif(1, .6, .9),
-                colsample_bytree = runif(1, .5, .8), 
-                min_child_weight = sample(1:40, 1),
-                max_delta_step = sample(1:10, 1)
-  )
-  cv.nround <-  2000
-  cv.nfold <-  5 
-  seed.number  <-  sample.int(10000, 1) 
-  set.seed(seed.number)
-  mdcv <- xgb.cv(data = dtrain_hubo,
-                 params = param,
-                 nfold = cv.nfold, 
-                 nrounds = cv.nround,
-                 verbose = T,
-                 early_stopping_rounds = 50,
-                 print_every_n = 100,
-                 maximize = FALSE)
-  
-  min_rmse_index  <-  mdcv$best_iteration
-  min_rmse <-  mdcv$evaluation_log[min_rmse_index]$test_rmse_mean
-  
-  if (min_rmse < best_rmse) {
-    best_rmse <- min_rmse
-    best_rmse_index <- min_rmse_index
-    best_seednumber <- seed.number
-    best_param <- param
-  }
-}
-
-# Fit
-
-set.seed(best_seednumber)
-model_hubo <- xgb.train(data = dtrain_hubo,
-                          params = best_param,
-                          nround = best_rmse_index,
-                          verbose = T,
-                          watchlist = list(train = dtrain_hubo,
-                                           validation = dvalidation_hubo))
-
-xgb.plot.importance(xgb.importance(model = model_hubo))
-mean((predict(model_hubo, dtest_hubo) - test_hubo$OPS) ** 2)
-
-# 5. Submission -----------------------------------------------------------
-
-test_jujeon$OPS_pred <- predict(model_jujeon, dtest_jujeon)
-test_hubo$OPS_pred <- predict(model_hubo, dtest_hubo)
-
-test_fin <- rbind(test_jujeon, test_hubo) %>% 
-  select(batter_id, OPS, OPS_pred)
-
-mean((test_fin$OPS - test_fin$OPS_pred) ** 2)
-
-submission <- submission %>% inner_join(test_fin %>% select(-OPS))
-write.csv(submission, 'submission.csv', row.names = F)
