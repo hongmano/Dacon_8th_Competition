@@ -1,6 +1,6 @@
 get_variable_names <- function(links){
   
-  # driver 실행
+  # driver
   
   remDr <- remoteDriver(remoteServerAddr = "localhost" ,
                         port = 4445L, 
@@ -92,8 +92,8 @@ KBO_crawl <- function(start, end, links){
               `colnames<-`(v_names[[link]]) %>%
               mutate(year = year,
                      position = position) %>% 
-              mutate(position = ifelse(position == 2, '포수',
-                                       ifelse(position == 3, '내야수', '외야수')))
+              mutate(position = ifelse(position == 2, 'catcher',
+                                       ifelse(position == 3, 'infielder', 'outfielder')))
             
             data_fin[[link]] <- rbind(data_fin[[link]], data_table)
             
