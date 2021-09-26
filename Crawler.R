@@ -1,149 +1,117 @@
-
-# 1. Get Variable Names From HTML Tables ----------------------------------
-
-get_variables <- function(){
+get_variable_names <- function(links){
   
-  variable_selector <- c('#cphContents_cphContents_cphContents_udpContent > div.record_result > table > thead > tr')
+  # driver 실행
   
-  # Detail1
+  remDr <- remoteDriver(remoteServerAddr = "localhost" ,
+                        port = 4445L, 
+                        browserName = "chrome")  
+  remDr$open(silent = T)
   
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Detail1.aspx')
+  # xpath 
   
-  detail1 <- remDr$findElement(using = 'css selector',
-                               value = variable_selector)$getElementText() %>% 
-    str_split(' ') %>% 
-    unlist()
+  xpath <- '//*[@id="cphContents_cphContents_cphContents_udpContent"]/div[3]/table/thead'
   
-  detail1[1:3] <- c('INDEX', 'PLAYER', 'TEAM')
-  detail1[9] <- 'GW/RBI'
-  detail1 <- detail1[-10]
+  # make list plate 
   
-  # Basic1
-  
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx')
-  
-  basic1 <- remDr$findElement(using = 'css selector',
-                              value = variable_selector)$getElementText() %>% 
-    str_split(' ') %>% 
-    unlist()
-  
-  basic1[1:3] <- c('INDEX', 'PLAYER', 'TEAM')
+  variable_names <- list()
   
   
-  # Basic2
+  for(i in 1:length(links)){
+    
+    remDr$navigate(links[[i]])
+    
+    variable_names[[i]] <- remDr$findElement(value = xpath)$getElementText() %>% 
+      str_replace_all('GW RBI', 'GW/RBI') %>% 
+      str_split(' ') %>% 
+      unlist()
+    
+  }
   
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx')
+  names(variable_names) <- names(links)
   
-  basic2 <- remDr$findElement(using = 'css selector',
-                              value = variable_selector)$getElementText() %>% 
-    str_split(' ') %>% 
-    unlist()
+  remDr$close()
   
-  basic2[1:3] <- c('INDEX', 'PLAYER', 'TEAM')
-  
-  fin <- list(detail = c(detail1, 'POSITION', 'YEAR'),
-              basic1 = c(basic1, 'POSITION', 'YEAR'),
-              basic2 = c(basic2, 'POSITION', 'YEAR'))
-  
-  return(fin)
+  return(variable_names)
   
 }
 
-# 2. Crawl Data from HTML Tables ------------------------------------------
 
-crawl_data <- function(min_year, max_year){
+KBO_crawl <- function(start, end, links){
   
-  # -1981 on HTML
+  # Get Variable Names & XPATH code
   
-  low <- min_year - 1981
-  max <- max_year - 1981
+  v_names <- get_variable_names(links)
+  data_xpath <- '//*[@id="cphContents_cphContents_cphContents_udpContent"]/div[3]/table/tbody'
+  year_xpath <- '//*[@id="cphContents_cphContents_cphContents_ddlSeason_ddlSeason"]/option['
+  position_xpath <- '//*[@id="cphContents_cphContents_cphContents_ddlPos_ddlPos"]/option['
+  page_xpath <- '//*[@id="cphContents_cphContents_cphContents_ucPager_btnNo'
   
-  # Plate
+  # Crawl
   
-  dat <- list()
+  data_fin <- list(basic1 = c(),
+                   basic2 = c(), 
+                   detail = c())
   
-  # Click Year Option
+  remDr <- remoteDriver(remoteServerAddr = "localhost" ,
+                        port = 4445L, 
+                        browserName = "chrome")  
+  remDr$open(silent = T)
   
-  for(year in low:max){
+  
+  # Basic1, Basic2, Detail
+  
+  for(link in 1:length(links)){
     
-    remDr$findElement(using = "xpath",
-                      value = paste0("//*[@id='cphContents_cphContents_cphContents_ddlSeason_ddlSeason']/option[", year, "]"))$clickElement()
-    Sys.sleep(1)
+    remDr$navigate(links[[link]])
     
-    # Click Team Option (Maximum 10 Teams)
+    # Year
     
-    for(team in 2:11){
+    for(year in start:end){
       
-      try(remDr$findElement(using = 'xpath',
-                            value = paste0("//*[@id='cphContents_cphContents_cphContents_ddlTeam_ddlTeam']/option[", team, "]"))$clickElement(), break)
-      Sys.sleep(1)
+      remDr$findElement(value = paste0(year_xpath, year - 1981, ']'))$clickElement()
       
-      # Click Position Option (Maximum 3 Positions)
+      # Position
       
       for(position in 2:4){
         
-        try(remDr$findElement(using = 'xpath',
-                              value = paste0("//*[@id='cphContents_cphContents_cphContents_ddlPos_ddlPos']/option[", position, "]"))$clickElement(), break)
-        Sys.sleep(1)
+        remDr$findElement(value = paste0(position_xpath, position, ']'))$clickElement()
         
-        # Click Player Option (Maximum 30 Players)
+        # Table List
         
-        for(player in 1:30){
+        for(page in 1:50){
           
-          try(player_data <- remDr$findElement(using = "xpath", 
-                                               value = paste0("//*[@id='cphContents_cphContents_cphContents_udpContent']/div[3]/table/tbody/tr[", player, "]"))$getElementText(), break)
-          
-          position_value <- ifelse(position == 2, 'Catcher',
-                                   ifelse(position == 3, 'Infielder', 'Outfielder'))
-          
-          player_data[[1]] <- paste(player_data[[1]], position_value, year + 1981) %>% 
-            str_split_fixed(' ', 18) %>% 
-            as.data.frame()
-          
-          dat <- append(dat, player_data)
-          
+          try({
+            
+            remDr$findElement(value = paste0(page_xpath, page, '"]'))$clickElement()
+            
+            data_table <- remDr$findElement(value = data_xpath)$getElementText() %>%
+              str_split('\n') %>%
+              unlist() %>%
+              str_split_fixed(' ', length(v_names[[link]])) %>%
+              as.data.frame() %>%
+              `colnames<-`(v_names[[link]]) %>%
+              mutate(year = year,
+                     position = position) %>% 
+              mutate(position = ifelse(position == 2, '포수',
+                                       ifelse(position == 3, '내야수', '외야수')))
+            
+            data_fin[[link]] <- rbind(data_fin[[link]], data_table)
+            
+          })
         }
       }
     }
   }
   
-  return(dat)
+  data_fin$basic2 <- data_fin$basic2 %>% select(-c(순위, 선수명, 팀명, year, position))
+  data_fin$detail <- data_fin$detail %>% select(-c(순위, 선수명, 팀명, year, position))
   
-}
-
-
-# 3. Let's Crawl ----------------------------------------------------------
-
-get_data <- function(min_year, max_year){
+  fin <- cbind(data_fin$basic1, 
+               data_fin$basic2, 
+               data_fin$detail)
   
-  variable_names <- get_variables()
+  remDr$close()
   
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx')
-  Sys.sleep(1)
-  
-  basic1 <- crawl_data(min_year, max_year) %>% 
-    bind_rows() %>% 
-    `colnames<-`(variable_names$basic1)
-  
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx')
-  Sys.sleep(1)
-  
-  basic2 <- crawl_data(min_year, max_year) %>% 
-    bind_rows() 
-  basic2 <- basic2[, 1:17] %>% 
-    `colnames<-`(variable_names$basic2)
-  
-  remDr$navigate('https://www.koreabaseball.com/Record/Player/HitterBasic/Detail1.aspx')
-  Sys.sleep(1)
-  
-  detail <- crawl_data(min_year, max_year) %>% 
-    bind_rows()
-  detail <- detail[, 1:16] %>% 
-    `colnames<-`(variable_names$detail)
-  
-  data_fin <- inner_join(basic1, basic2) %>% 
-    inner_join(detail)
-  
-  return(data_fin)
+  return(fin)
   
 }
