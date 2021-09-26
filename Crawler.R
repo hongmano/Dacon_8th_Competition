@@ -69,12 +69,14 @@ KBO_crawl <- function(start, end, links){
     for(year in start:end){
       
       remDr$findElement(value = paste0(year_xpath, year - 1981, ']'))$clickElement()
+      Sys.sleep(1)
       
       # Position
       
       for(position in 2:4){
         
         remDr$findElement(value = paste0(position_xpath, position, ']'))$clickElement()
+        Sys.sleep(1)
         
         # Table List
         
@@ -83,6 +85,7 @@ KBO_crawl <- function(start, end, links){
           try({
             
             remDr$findElement(value = paste0(page_xpath, page, '"]'))$clickElement()
+            Sys.sleep(1)
             
             data_table <- remDr$findElement(value = data_xpath)$getElementText() %>%
               str_split('\n') %>%
