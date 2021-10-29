@@ -63,6 +63,7 @@ KBO_crawl <- function(start, end, links){
   for(link in 1:length(links)){
     
     remDr$navigate(links[[link]])
+    Sys.sleep(1)
     
     # Year
     
@@ -106,8 +107,8 @@ KBO_crawl <- function(start, end, links){
     }
   }
   
-  data_fin$basic2 <- data_fin$basic2 %>% select(-c(순위, 선수명, 팀명, year, position))
-  data_fin$detail <- data_fin$detail %>% select(-c(순위, 선수명, 팀명, year, position))
+  data_fin$basic2 <- data_fin$basic2 %>% select(-c(순위, 선수명, 팀명, year, position, AVG))
+  data_fin$detail <- data_fin$detail %>% select(-c(순위, 선수명, 팀명, year, position, AVG))
   
   fin <- cbind(data_fin$basic1, 
                data_fin$basic2, 
