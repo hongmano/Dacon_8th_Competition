@@ -28,10 +28,10 @@ links <- list(
 
 # data <- KBO_crawl(2010, 2010, links)
 
-data <- read.csv("C:\\Users\\Mano\\Desktop\\Soomgo\\DataAnalysis\\1005LMH\\data.csv") %>% 
+data <- read.csv("your path") %>% 
     select(-INDEX) %>% 
-    mutate(pk = paste(year, PLAYER, sep = '_'),
-           pk2 = paste(year-1, PLAYER, sep = '_'))
+    mutate(pk = paste(YEAR, PLAYER, sep = '_'),
+           pk2 = paste(YEAR-1, PLAYER, sep = '_'))
 
 names(data) <- tolower(names(data))
 
