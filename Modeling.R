@@ -1,417 +1,468 @@
 
-# 1. Prepare --------------------------------------------------------------
+# 1. Packages / Options ---------------------------------------------------
 
-# cmd 창에서
+if (!require(RSelenium)) install.packages('RSelenium'); require(RSelenium)
+if (!require(stringr)) install.packages('stringr'); require(stringr)
+if (!require(dplyr)) install.packages('dplyr'); require(dplyr)
+if (!require(reshape2)) install.packages('reshape2'); require(reshape2)
+
+if (!require(ggplot2)) install.packages('ggplot2'); require(ggplot2)
+if (!require(ggpubr)) install.packages('ggpubr'); require(ggpubr)
+if (!require(plotly)) install.packages('plotly'); require(plotly)
+if (!require(ggcorrplot)) install.packages('ggcorrplot'); require(ggcorrplot)
+
+if (!require(xgboost)) install.packages('xgboost'); require(xgboost)
+
 # cd C:\r_selenium
 # java -Dwebdriver.gecko.driver="geckodriver.exe" -jar selenium-server-standalone-3.11.0.jar -port 4445
 
-# 2. Options / Packages ---------------------------------------------------
+# 2. Data Crawling --------------------------------------------------------
 
-options(scipen = 100)
+links <- list(
+    
+    basic1 = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx',
+    basic2 = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx',
+    detail = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Detail1.aspx'
+    
+)
 
-if (!require(RSelenium)) install.packages('RSelenium'); require(RSelenium) # Selenium in R
+# data <- KBO_crawl(2010, 2010, links)
 
-if (!require(xgboost)) install.packages('xgboost'); require(xgboost) # XGBOOST
+data <- read.csv("C:\\Users\\Mano\\Desktop\\Soomgo\\DataAnalysis\\1005LMH\\data.csv") %>% 
+    select(-INDEX) %>% 
+    mutate(pk = paste(year, PLAYER, sep = '_'),
+           pk2 = paste(year-1, PLAYER, sep = '_'))
 
-if (!require(dplyr)) install.packages('dplyr'); require(dplyr) # Wrangling
-if (!require(stringr)) install.packages('stringr'); require(stringr) # Wrangling
-if (!require(stringr)) install.packages('reshape2'); require(reshape2) # Wrangling
-if (!require(scales)) install.packages('scales'); require(scales) # Wrangling
+names(data) <- tolower(names(data))
 
-if (!require(ggplot2)) install.packages('ggplot2'); require(ggplot2) # Visualize
-if (!require(ggpubr)) install.packages('ggpubr'); require(ggpubr) # Visualize
-if (!require(plotly)) install.packages('plotly'); require(plotly) # Visualize
-if (!require(ggcorrplot)) install.packages('ggcorrplot'); require(ggcorrplot) # Visualize
+# Duplicated Names?
 
-source('utils.R')
+duplicate <- data %>% group_by(year, player) %>% tally %>% filter(n > 1)
 
-# 3. Crawling -------------------------------------------------------------
+data <- data %>% filter(!pk %in% paste(duplicate$year, duplicate$player, sep = '_'))
 
-# Execute Chrome Driver
+tst1 <- data %>% select(pk, ops)
+tst2 <- data %>% mutate(pk = paste(year + 1, player, sep = '_')) %>% select(-c(ops, pk2))
 
-remDr <- remoteDriver(remoteServerAddr = "localhost" ,
-                      port = 4445L, 
-                      browserName = "chrome")  
-remDr$open(silent = T)
+train <- tst1 %>% inner_join(tst2) %>% filter(year != 2019)
+test <- data %>% filter(year == 2019) %>% mutate(pk = pk2) %>% select(-pk2)
 
-# Get Data
+data$pk2 <- NULL
 
-data <- get_data(2010, 2020)
+rm(tst1, tst2, data, duplicate)
 
-setwd('C:\\Users\\Mano\\Desktop\\프로젝트\\2019. 04[Dacon 6th Competition - KBO 타자들의 OPS 예측]\\데이터')
-write.csv(data, 'kbo_crawl.csv', row.names = F)
+# 3. Data Wrangling -------------------------------------------------------
 
-# 4. Data Wrangling --------------------------------------------------------
+# Character to Numeric
 
-data2 <- read.csv('kbo_crawl.csv')
+str(train)
 
-# 4-1. To Numeric
+train_chr <- train %>% select(pk, year, team, player, position)
+train_num <- train %>% select(-c(pk, year, team, player, position))
 
-str(data2)
-data2 <- sapply(data2, function(x) str_replace_all(x, '-', '')) %>% as.data.frame()
+train_chr <- apply(train_chr, 2, as.character) %>% as.data.frame()
+train_num <- apply(train_num, 2, as.numeric) %>% as.data.frame()
 
-data2_chr <- data2 %>% select(PLAYER, TEAM, POSITION, YEAR)
-data2_num <- data2 %>% select(-c(PLAYER, TEAM, POSITION, YEAR))
-data2_num <- sapply(data2_num, as.numeric) %>% as.data.frame()
 
-data2 <- cbind(data2_chr, data2_num)
+test_chr <- test %>% select(pk, year, team, player, position)
+test_num <- test %>% select(-c(pk, year, team, player, position))
 
+test_chr <- apply(test_chr, 2, as.character) %>% as.data.frame()
+test_num <- apply(test_num, 2, as.numeric) %>% as.data.frame()
 
-data2$INDEX <- NULL
-data2[is.na(data2)] <- 0
 
+train <- cbind(train_chr, train_num)
+test <- cbind(test_chr, test_num)
 
-str(data2)
+str(train)
 
-# 4-2. Primary Key
+# Make X1B Variable
 
-# 동명이인 선수 존재
+train <- train %>% 
+    mutate(x1b = h - hr - x2b - x3b)
 
-same_name <- data2 %>% group_by(YEAR, TEAM, PLAYER) %>% tally %>% filter(n != 1)
+test <- test %>% 
+    mutate(x1b = h - hr - x2b - x3b)
 
-# 확인 결과 2010 ~ 2016 시즌 LG에 이병규 선수가 2명
+# Erase NAs
 
-same_name <- data2 %>% 
-  filter(YEAR %in% 2010:2016 & TEAM == 'LG' & PLAYER == '이병규')
+train <- na.omit(train)
+test <- na.omit(test)
 
-# 사전 지식 없이 구분 불가 -> 삭제
 
-data2 <- setdiff(data2, same_name)
+# 4. Domain Knowledge ---------------------------------------------------
 
-# 동명이인 제거했기에, YEAR + TEAM + 선수이름을 Primary Key로 사용가능
+# 4-1-1. Erase RBI / R (It is not about HITTING ABILITY)
 
-data2 <- data2 %>% mutate(PK = paste(YEAR, TEAM, PLAYER, sep = '_'))
-data2$PK
+train <- train %>% select(-c(rbi, r))
+test <- test %>% select(-c(rbi, r))
 
-# 4-3. 1루타 변수 생성
-# 1루타 = 안타 - 2루타 - 3루타 - 홈런
+# 4-1-2. Erase XBH (Linear Combination of X2B, X3B, HR)
 
-data2 <- data2 %>% mutate(X1B = H - X2B - X3B - HR)
+train$xbh <- NULL
+test$xbh <- NULL
 
-# 4-4. Train / Test Split
-# 2020년의 성적을 예측하는 것이 목표이므로 2020년 데이터는 Test Data로
-# *** 난이도 조절 위해 100타수 이상 선수만 Filtering
+# 4-1-3. Erase G, ab (Same Information with pa)
 
-test_x <- data2 %>% filter(YEAR == 2019 & AB >= 100)
-test_y <- data2 %>% 
-  filter(YEAR == 2020) %>% 
-  mutate(PK = paste0(as.numeric(substr(PK, 1, 4)) - 1, substr(PK, 5, 20))) %>% 
-  filter(PK %in% test_x$PK) %>% 
-  select(PK, OPS, AB)
-  
-train <- data2 %>% filter(YEAR != 2020 & YEAR != 2019)
+train %>%
+    select(pa, g, ab) %>% 
+    pairs()
 
-### Test Data는 무슨 일이 있어도 열어보지 않음이 중요!!(Data Leakage)
+train <- train %>% 
+    mutate(pa2 = pa / g) %>% 
+    select(-c(g, ab))
 
-# 5. EDA ------------------------------------------------------
+test <- test %>% 
+    mutate(pa2 = pa / g) %>% 
+    select(-c(g, ab))
 
-### DOMAIN
-
-train$RBI <- NULL
-train$XBH <- NULL
-train$R <- NULL
-train$PA <- NULL
-train$G <- NULL
-
-### GENERAL
-# 5-1. 성적 수렴 AB
-
-ggplotly(train %>% 
-           ggplot() +
-           geom_point(aes(x = AB,
-                          y = OPS,
-                          col = ifelse(AB >= 50, 'Team', '4실'))) +
-           geom_vline(xintercept = 50,
-                      col= 'red',
-                      linetype = 'dotted') +
-           theme_bw() +
-           theme(legend.position = 'none') +
-           geom_smooth(aes(x = AB,
-                           y = OPS),
-                       method = 'auto'))
-
-train <- train %>% filter(AB >= 50)
-
-# 5-2. 연도 별 AB
-
-ggplotly(train %>% 
-           group_by(YEAR) %>% 
-           summarise(AB = sum(AB)) %>% 
-           ggplot(aes(x = YEAR,
-                      y = AB,
-                      fill = AB)) +
-           geom_bar(stat = 'identity') +
-           scale_fill_gradient(low = 'black',
-                               high = 'red') +
-           labs(x = '연도',
-                y = '타수',
-                title = '연도별 타수') +
-           theme_bw())
-
-
-
-# etc. 스포츠 데이터 특성
-
-ggcorrplot(train %>% select_if(is.numeric) %>% cor,
-           lab = T,
-           hc.order = T)
-
-train %>% select(OPS, PH.BA, GO.AO) %>% pairs()
-
-train$PH.BA <- NULL
-train$GO.AO <- NULL
-
-### 타격 변수
-# 5-3. 3루타가 관계 없음?
-
-ggcorrplot(train %>%
-             select(X1B, X2B, X3B, HR, OPS) %>% 
-             cor,
-           lab = T)
-
-plot(density(train$X3B))
-
-# 5-4. 타고투저
-
-mano <- train %>% 
-  select(YEAR, AB, H, X1B, X2B, X3B, HR) %>% 
-  group_by(YEAR) %>% 
-  summarise_all(.funs = sum)
-
-ggplotly(melt(mano, id.vars = c('YEAR', 'AB', 'H')) %>%
-           ggplot(aes(x = YEAR,
-                      y = value,
-                      col = variable)) +
-           geom_line(aes(group = variable)) + 
-           geom_point(aes(size = AB)) +
-           labs(title = '연도 별 안타 빈도',
-                y = 'Freq') +
-           theme_bw())
-
-# 5-5. 타격 유형
-
-mano <- mano %>% 
-  mutate(X1B_ratio = X1B / H * 100,
-         X2B_ratio = X2B / H * 100,
-         HR_ratio = HR / H * 100) %>% 
-  select(YEAR, ends_with('ratio')) 
-melt(mano, id.vars = 'YEAR') %>%
-  ggplot() +
-  geom_bar(aes(y = value, 
-               x = YEAR, 
-               fill = variable), 
-           stat = "identity") +
-  geom_text(aes(x = YEAR, 
-                y = round(value) - 4, 
-                label = paste0(round(value), "%")),
-            colour = "black", 
-            size = 3) +
-  scale_y_continuous(labels = dollar_format(suffix = "%", 
-                                            prefix = "")) +
-  labs(y = "Percentage") +
-  theme_bw() +
-  theme(legend.position = "bottom", 
-        legend.direction = "horizontal",
-        legend.title = element_blank())
-
-
-### 출루 변수
-# 5-6 출루 유형
-
-mano <- train %>% 
-  select(YEAR, AB, BB, IBB, HBP) %>% 
-  group_by(YEAR) %>% 
-  summarise_all(.funs = sum)
-ggplotly(melt(mano, id.vars = c('YEAR', 'AB')) %>%
-           ggplot(aes(x = YEAR,
-                      y = value,
-                      col = variable)) +
-           geom_point(aes(size = AB)) +
-           geom_line(aes(group = variable)) +
-           labs(title = '연도 별 4구/고의4구/사구 빈도',
-                y = 'Freq') +
-           theme_bw())
-
-# 5-7 출루 유형
-
-mano <- train %>% 
-  select(YEAR, BB, IBB, HBP) %>% 
-  group_by(YEAR) %>% 
-  summarise_all(.funs = sum) %>% 
-  mutate(BB_ratio = BB / (BB + IBB + HBP) * 100,
-         IBB_ratio = IBB / (BB + IBB + HBP) * 100,
-         HBP_ratio = HBP / (BB + IBB + HBP) * 100) %>% 
-  select(YEAR, ends_with('_ratio'))
-melt(mano, id.vars = 'YEAR') %>%
-  ggplot() +
-  geom_bar(aes(y = value, 
-               x = YEAR, 
-               fill = variable), 
-           stat = "identity") +
-  geom_text(aes(x = YEAR, 
-                y = round(value), 
-                label = paste0(round(value), "%")),
-            colour = "black", 
-            size = 3) +
-  scale_y_continuous(labels = dollar_format(suffix = "%", 
-                                            prefix = "")) +
-  labs(y = "Percentage") +
-  theme_bw() +
-  theme(legend.position = "bottom", 
-        legend.direction = "horizontal",
-        legend.title = element_blank())
-
-### POSITION
-
-my_comparisons <- list( c("Catcher", "Infielder"), 
-                        c("Catcher", "Outfielder"), 
-                        c("Infielder", "Outfielder"))
-
-ggboxplot(data = train, 
-          x = 'POSITION', 
-          y = 'OPS',
-          color = 'POSITION', 
+# 4-2. Our Y Variable OPS 
+
+train %>% 
+    ggplot(aes(x = ops)) +
+    geom_density() +
+    theme_bw()
+
+# 4-2-1. OPS ~ PA
+
+train %>% 
+    ggplot(aes(x = pa,
+               y = ops)) +
+    geom_point(size = 3,
+               alpha = 0.5) +
+    scale_x_continuous(breaks = seq(0, 600, 50)) +
+    geom_smooth(formula = y ~ x,
+                method = 'gam',
+                size = 3) +
+    geom_vline(aes(xintercept = 50),
+               col = 'red') +
+    theme_bw()
+
+# 4-2-2. Over 50 PA
+
+train %>% 
+    filter(pa > 49) %>% 
+    ggplot(aes(x = pa,
+               y = ops)) +
+    geom_point(size = 3,
+               alpha = 0.5) +
+    scale_x_continuous(breaks = seq(0, 600, 50)) +
+    geom_smooth(formula = y ~ x,
+                method = 'gam',
+                size = 3) +
+    geom_vline(aes(xintercept = 50),
+               col = 'red') +
+    theme_bw()
+
+### IMPORTANT
+
+train <- train %>% filter(pa > 49)
+
+# 5. EDA ------------------------------------------------------------------
+
+ggplotly(
+    
+    train %>% 
+        group_by(year) %>% 
+         summarise(pa = sum(pa)) %>% 
+         ggplot(aes(x = year,
+                    y = pa,
+                    fill = pa)) +
+         geom_bar(stat = 'identity') +
+         scale_fill_gradient(low = 'black',
+                             high = 'red') +
+         labs(x = '연도',
+              y = '타석 수',
+              title = '연도별 타석 수') +
+         theme_bw()
+    
+    )
+
+# 5-1. 안타 관련 변수 -----------------------------------------------------------------
+
+# X3B????
+
+train %>%
+    select(x1b, x2b, x3b, hr, ops) %>% 
+    pairs()
+
+# Density of X3B
+
+quantile(train$x3b, probs = seq(0, 1, 0.1))
+
+
+# H by year
+
+ggplotly(
+    
+    train %>% 
+        select(year, pa, h, paste0('x', 1:3, 'b')) %>% 
+        group_by(year) %>% 
+        summarise_all(.funs = sum) %>% 
+        melt(id.vars = c('year', 'pa', 'h')) %>% 
+        ggplot(aes(x = year,
+                   y = value,
+                   col = variable)) +
+        geom_point(aes(size = pa)) +
+        geom_line(aes(group = variable)) +
+        geom_line() +
+        labs(title = '연도 별 안타 빈도',
+             y = 'Freq') +
+        theme_bw()
+    
+)
+
+# Ratio??
+
+ggplotly(
+
+    train %>% 
+        select(year, x1b, x2b, x3b, hr, h) %>% 
+        group_by(year) %>% 
+        summarise_all(.funs = sum) %>% 
+        mutate(x1b_ratio = x1b / h * 100,
+               x2b_ratio = x2b / h * 100,
+               x3b_ratio = x3b / h * 100,
+               hr_ratio = hr / h * 100) %>% 
+        select(year, ends_with('ratio')) %>% 
+        melt(id.vars = 'year') %>%
+        ggplot(aes(x = value,
+                   y = year,
+                   fill = variable)) +
+        geom_bar(stat = 'identity') +
+        labs(y = "Percentage") +
+        geom_text(aes(label = paste0(round(value, 0), '%'))) +
+        theme_bw() 
+)
+
+
+# 5-2. 출루 관련 변수 -----------------------------------------------------------
+
+train %>%
+    select(bb, ibb, hbp, ops) %>% 
+    pairs()
+
+ggplotly(
+    
+    train %>% 
+        select(year, pa, bb, ibb, hbp) %>% 
+        group_by(year) %>% 
+        summarise_all(.funs = sum) %>% 
+        melt(id.vars = c('year', 'pa')) %>% 
+        ggplot(aes(x = year,
+                   y = value,
+                   col = variable)) +
+        geom_point(aes(size = pa)) +
+        geom_line(aes(group = variable)) +
+        geom_line() +
+        labs(title = '연도 별 출루 빈도',
+             y = 'Freq') +
+        theme_bw()
+    
+)
+
+ggplotly(
+    
+    train %>% 
+        select(year, bb, ibb, hbp) %>% 
+        group_by(year) %>% 
+        summarise_all(.funs = sum) %>% 
+        mutate(all = bb + ibb + hbp) %>% 
+        mutate(bb_ratio = bb / all * 100,
+               ibb_ratio = ibb / all * 100,
+               hbp_ratio = hbp / all * 100) %>% 
+        select(year, ends_with('ratio')) %>% 
+        melt(id.vars = 'year') %>%
+        ggplot(aes(x = value,
+                   y = year,
+                   fill = variable)) +
+        geom_bar(stat = 'identity') +
+        labs(y = "Percentage") +
+        theme_bw() 
+)
+
+
+# 5-3. 아웃 관련 변수 -----------------------------------------------------------
+
+train %>%
+    select(so, go, ao, go.ao, gdp, sac, sf, ops) %>% 
+    pairs()
+
+train %>%
+    select(so, go, ao, go.ao, gdp, sac, sf, ops) %>% 
+    cor() %>% 
+    ggcorrplot(lab = T,
+               colors = c('blue', 'white', 'red'),
+               hc.order = T)
+
+
+# 5-4. Position -----------------------------------------------------------
+
+my_comparisons <- list( c("Infielder", "Outfielder"), 
+                        c("Infielder", "Catcher"), 
+                        c("Outfielder", "Catcher"))
+
+ggboxplot(data = train,
+          x = 'position', 
+          y = 'ops',
+          color = 'position', 
           palette = "jco", 
           bxp.errorbar = TRUE) +
-  stat_boxplot(geom = 'errorbar', 
-               data = train, 
-               aes(x = POSITION, 
-                   y = OPS,
-                   color = POSITION)) +
-  stat_compare_means(comparisons = my_comparisons) + 
-  stat_compare_means(label.y = 1.5) +
-  labs(x = '타격 유형') +
-  theme_bw()
+    
+    stat_boxplot(geom = 'errorbar', 
+                 data = train, 
+                 aes(x = position, 
+                     y = ops,
+                     color = position)) +
+    
+    stat_compare_means(comparisons = my_comparisons) + 
+    stat_compare_means(label.y = 1.7) +
+    
+    theme_bw()
 
-# 6. Feature Engineering --------------------------------------------------
+table(train$position)
 
-# 비율
+train <- train %>% mutate(position = ifelse(position != 'Catcher', 'Fielder', position))
+test <- test %>% mutate(position = ifelse(position != 'Catcher', 'Fielder', position))
 
-train <- train %>% 
-  mutate(X1B = X1B / H,
-         X2B = X2B / H,
-         X3B = X3B / H,
-         HR = HR / H)
+table(train$position)
 
-test_x <- test_x %>% 
-  mutate(X1B = X1B / H,
-         X2B = X2B / H,
-         X3B = X3B / H,
-         HR = HR / H)
+# 5.5. Team ----------------------------------------------------------------
 
-# 주성분분석
+ggplot(train,
+       aes(x = team,
+           y = ops,
+           col = team)) +
+    geom_boxplot() +
+    geom_jitter() +
+    theme_bw()
 
-pca <- train %>% select(SLG, GPA, AVG, OBP)
-pca_matrix <- prcomp(pca, scale. = T)
-
-summary(pca_matrix)
-
-pca_matrix$rotation <- pca_matrix$rotation[, 1:2]
-pca <- pca_matrix$x %*% pca_matrix$rotation %>% 
-  as.data.frame() %>% 
-  `colnames<-`(c('PC1', 'PC2'))
+# 6. Modeling -------------------------------------------------------------
 
 train <- train %>% 
-  mutate(PC1 = pca$PC1,
-         PC2 = pca$PC2)
+    select(-c(pk, team, player, year)) %>%
+    na.omit()
 
-ggcorrplot(cor(train %>% select_if(is.numeric)),
-           lab = T)
+test <- test %>% 
+    select(-c(pk, team, player, year)) %>% 
+    na.omit()
 
-### TEST
-
-pca <- test_x %>% select(SLG, GPA, AVG, OBP)
-pca_matrix <- prcomp(pca, scale. = T)
-
-summary(pca_matrix)
-
-pca_matrix$rotation <- pca_matrix$rotation[, 1:2]
-pca <- pca_matrix$x %*% pca_matrix$rotation %>% 
-  as.data.frame() %>% 
-  `colnames<-`(c('PC1', 'PC2'))
-
-test_x <- test_x %>% 
-  mutate(PC1 = pca$PC1,
-         PC2 = pca$PC2)
-
-# 7. Modeling -----------------------------------------------------------
-
-train_x <- train %>% select(-OPS)
-train_y <- train %>% select(PK, OPS)
-train_y <- train_y %>% mutate(PK = paste0(as.numeric(substr(PK, 1, 4)) - 1, substr(PK, 5, 100)))
-
-train_fin <- inner_join(train_x, train_y)
+# 6-1. Regression ---------------------------------------------------------
 
 
-vars <- c('AB', 'H', 'X1B', 'X2B', 'X3B', 'HR', 'TB', 'SAC', 'SF', 'BB', 'IBB', 'HBP', 'SO', 'GDP', 'MH', 'RISP', 'GO', 'AO',
-          'GW.RBI', 'BB.K', 'P.PA', 'ISOP', 'XR', 'PC1', 'PC2')
-dtrain <- xgb.DMatrix(data = data.matrix(train_fin[, vars]),
-                      label = train_fin$OPS)
+### First Regression
 
-# Random search for parameters
+model1 <- lm(train, formula =  ops ~ .,) %>% step()
+summary(model1)
+
+### WHY???
+
+train %>% 
+    select_if(is.numeric) %>% 
+    cor() %>% 
+    ggcorrplot(hc.order = T,
+               lab = T)
+
+### Mutate Ratio Variables
+
+ratio_variables <- c('x1b x2b x3b hr tb sac sf bb ibb hbp so go ao') %>% 
+    str_split(' ') %>% 
+    unlist
+
+train <- train %>% 
+    mutate_at(ratio_variables, function(x) x / train$pa) %>% 
+    na.omit()
+
+test <- test %>% 
+    mutate_at(ratio_variables, function(x) x / test$pa) %>% 
+    na.omit()
+
+### Second Regression
+
+model2 <- lm(train, formula =  ops ~ .,) %>% step()
+summary(model2)
+
+# 6-2. XGB ----------------------------------------------------------------
+
+train <- train %>% mutate(position = ifelse(position == 'Catcher', 0, 1))
+test <- test %>% mutate(position = ifelse(position == 'Catcher', 0, 1))
+
+dtrain <- xgb.DMatrix(as.matrix(train %>% select(-ops)),
+                      label = train$ops)
+dtest <- xgb.DMatrix(as.matrix(test %>% select(-ops)))
+
+
+# Random Search
 
 best_param <- list()
 best_seednumber <- 1234
 best_rmse <- Inf
 best_rmse_index <- 0
 
-for(iter in 1:10){
-  
-  param <- list(objective = "reg:squarederror",
-                eval_metric = "rmse",
-                max_depth = sample(6:10, 1),
-                eta = runif(1, .01, .3), 
-                subsample = runif(1, .6, .9),
-                colsample_bytree = runif(1, .5, .8), 
-                min_child_weight = sample(1:40, 1),
-                max_delta_step = sample(1:10, 1)
-  )
-  
-  cv.nround <-  2000
-  cv.nfold <-  5 
-  seed.number  <-  sample.int(10000, 1)
-  set.seed(seed.number)
-  mdcv <- xgboost::xgb.cv(data = dtrain, 
-                          params = param,  
-                          nfold = cv.nfold, 
-                          nrounds = cv.nround,
-                          verbose = F, 
-                          early_stopping_rounds = 30, 
-                          maximize = FALSE)
-  
-  min_rmse_index  <-  mdcv$best_iteration
-  min_rmse <-  mdcv$evaluation_log[min_rmse_index]$test_rmse_mean
-  
-  if (min_rmse < best_rmse) {
-    best_rmse <- min_rmse
-    best_rmse_index <- min_rmse_index
-    best_seednumber <- seed.number
-    best_param <- param
-  }
-  
-  print(paste0(iter, 'th Trial has done....'))
+for (iter in 1:100) {
+    
+    param <- list(obj = 'reg:linear',
+                  eval_metric = "rmse",
+                  max_depth = sample(6:10, 1),
+                  eta = runif(1, .01, .1), 
+                  subsample = runif(1, .6, .9),
+                  colsample_bytree = runif(1, .5, .8), 
+                  min_child_weight = sample(1:40, 1),
+                  max_delta_step = sample(1:10, 1)
+    )
+    
+    cv.nround <-  2000
+    cv.nfold <-  5 
+    seed.number  <-  sample.int(10000, 1) 
+    
+    
+    set.seed(seed.number)
+    
+    
+    mdcv <- xgb.cv(data = dtrain,
+                   params = param,
+                   nfold = cv.nfold, 
+                   nrounds = cv.nround,
+                   verbose = T,
+                   early_stopping_rounds = 100,
+                   print_every_n = 100,
+                   maximize = FALSE)
+    
+    min_rmse_index  <-  mdcv$best_iteration
+    min_rmse <-  mdcv$evaluation_log[min_rmse_index]$test_rmse_mean
+    
+    if (min_rmse < best_rmse) {
+        
+        best_rmse <- min_rmse
+        best_rmse_index <- min_rmse_index
+        best_seednumber <- seed.number
+        best_param <- param
+        
+    }
 }
 
-nround <- best_rmse_index
+# Fit
+
 set.seed(best_seednumber)
+model3 <- xgb.train(data = dtrain,
+                    params = best_param,
+                    nround = best_rmse_index,
+                    verbose = T)
 
-xgboost_model <- xgboost(data = dtrain,
-                         params = best_param,
-                         nround = nround, 
-                         verbose = T,
-                         print_every_n = 1)
+xgb.ggplot.importance(xgb.importance(model = model3))
 
-# 8. Submitting -----------------------------------------------------------
+# 6-3. Torch --------------------------------------------------------------
 
-dtest <- xgb.DMatrix(data = data.matrix(test_x[, vars]),
-                      label = test_x$OPS)
+# 7. Compare --------------------------------------------------------------
 
-test_x$pred <- predict(xgboost_model, dtest)
+pred1 <- predict(model1, test)
+pred2 <- predict(model2, test)
+pred3 <- predict(model3, dtest)
 
-result <- inner_join(test_y, test_x %>% select(PK, pred)) %>% 
-  mutate(error = OPS - pred)
+error1 <- test$ops - pred1
+error2 <- test$ops - pred2
+error3 <- test$ops - pred3
 
-### MSE
-
-mean(result$error ** 2)
-
+mean(error1^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
+mean(error2^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
+mean(error3^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
