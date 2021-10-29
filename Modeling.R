@@ -26,18 +26,14 @@ links <- list(
     
 )
 
-# data <- KBO_crawl(2010, 2010, links)
-
-data <- read.csv("your path") %>% 
-    select(-INDEX) %>% 
-    mutate(pk = paste(YEAR, PLAYER, sep = '_'),
-           pk2 = paste(YEAR-1, PLAYER, sep = '_'))
-
+data <- KBO_crawl(2010, 2020, links)
 names(data) <- tolower(names(data))
 
 # Duplicated Names?
 
 duplicate <- data %>% group_by(year, player) %>% tally %>% filter(n > 1)
+
+# 1년 전 성적과 1년 후 OPS 연결
 
 data <- data %>% filter(!pk %in% paste(duplicate$year, duplicate$player, sep = '_'))
 
@@ -88,7 +84,6 @@ test <- test %>%
 
 train <- na.omit(train)
 test <- na.omit(test)
-
 
 # 4. Domain Knowledge ---------------------------------------------------
 
@@ -466,3 +461,4 @@ error3 <- test$ops - pred3
 mean(error1^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
 mean(error2^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
 mean(error3^2 * test$pa / sum(test$pa), na.rm = T) %>% sqrt
+
