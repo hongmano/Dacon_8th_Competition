@@ -15,7 +15,6 @@ get_variable_names <- function(links){
   
   variable_names <- list()
   
-  
   for(i in 1:length(links)){
     
     remDr$navigate(links[[i]])
@@ -36,11 +35,20 @@ get_variable_names <- function(links){
 }
 
 
-KBO_crawl <- function(start, end, links){
+KBO_crawl <- function(start, end){
+  
+  links <- list(
+    
+    basic1 = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx',
+    basic2 = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx',
+    detail = 'https://www.koreabaseball.com/Record/Player/HitterBasic/Detail1.aspx'
+    
+  )
   
   # Get Variable Names & XPATH code
   
   v_names <- get_variable_names(links)
+  
   data_xpath <- '//*[@id="cphContents_cphContents_cphContents_udpContent"]/div[3]/table/tbody'
   year_xpath <- '//*[@id="cphContents_cphContents_cphContents_ddlSeason_ddlSeason"]/option['
   position_xpath <- '//*[@id="cphContents_cphContents_cphContents_ddlPos_ddlPos"]/option['
@@ -59,8 +67,9 @@ KBO_crawl <- function(start, end, links){
   
   
   # Basic1, Basic2, Detail
-  
+
   for(link in 1:length(links)){
+    
     
     remDr$navigate(links[[link]])
     Sys.sleep(1)
@@ -68,7 +77,7 @@ KBO_crawl <- function(start, end, links){
     # Year
     
     for(year in start:end){
-      
+
       remDr$findElement(value = paste0(year_xpath, year - 1981, ']'))$clickElement()
       Sys.sleep(1)
       
@@ -85,8 +94,9 @@ KBO_crawl <- function(start, end, links){
           
           try({
             
+            
             remDr$findElement(value = paste0(page_xpath, page, '"]'))$clickElement()
-            Sys.sleep(1)
+            Sys.sleep(3)
             
             data_table <- remDr$findElement(value = data_xpath)$getElementText() %>%
               str_split('\n') %>%
@@ -99,6 +109,8 @@ KBO_crawl <- function(start, end, links){
               mutate(position = ifelse(position == 2, 'catcher',
                                        ifelse(position == 3, 'infielder', 'outfielder')))
             
+            Sys.sleep(1)
+            
             data_fin[[link]] <- rbind(data_fin[[link]], data_table)
             
           })
@@ -107,15 +119,16 @@ KBO_crawl <- function(start, end, links){
     }
   }
   
-  data_fin$basic2 <- data_fin$basic2 %>% select(-c(순위, 선수명, 팀명, year, position, AVG))
-  data_fin$detail <- data_fin$detail %>% select(-c(순위, 선수명, 팀명, year, position, AVG))
-  
-  fin <- cbind(data_fin$basic1, 
-               data_fin$basic2, 
-               data_fin$detail)
+  fin <- data_fin$basic1 %>% 
+    inner_join(data_fin$basic2) %>% 
+    inner_join(data_fin$detail) %>% 
+    unique %>% 
+    rename(player = `선수명`,
+           team = `팀명`)
   
   remDr$close()
   
   return(fin)
   
 }
+
