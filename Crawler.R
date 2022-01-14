@@ -72,21 +72,21 @@ KBO_crawl <- function(start, end){
     
     
     remDr$navigate(links[[link]])
-    Sys.sleep(1)
+    Sys.sleep(2)
     
     # Year
     
     for(year in start:end){
 
       remDr$findElement(value = paste0(year_xpath, year - 1981, ']'))$clickElement()
-      Sys.sleep(1)
+      Sys.sleep(2)
       
       # Position
       
       for(position in 2:4){
         
         remDr$findElement(value = paste0(position_xpath, position, ']'))$clickElement()
-        Sys.sleep(1)
+        Sys.sleep(2)
         
         # Table List
         
@@ -109,7 +109,7 @@ KBO_crawl <- function(start, end){
               mutate(position = ifelse(position == 2, 'catcher',
                                        ifelse(position == 3, 'infielder', 'outfielder')))
             
-            Sys.sleep(1)
+            Sys.sleep(2)
             
             data_fin[[link]] <- rbind(data_fin[[link]], data_table)
             
